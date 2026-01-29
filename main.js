@@ -736,6 +736,16 @@ let defaultViewMatrix = [
     0.03, 6.55, 1,
 ];
 let viewMatrix = defaultViewMatrix;
+
+// Split-screen state
+let splatSets = {
+    left: null,
+    right: null
+};
+let dividerPosition = 0.5; // 0-1 range, 0.5 = center
+let isDraggingDivider = false;
+let isSplitMode = false;
+
 async function main() {
     let carousel = true;
     const params = new URLSearchParams(location.search);
@@ -743,15 +753,18 @@ async function main() {
         viewMatrix = JSON.parse(decodeURIComponent(location.hash.slice(1)));
         carousel = false;
     } catch (err) {}
+
+    // Support both single and dual URL parameters
+    const leftUrl = params.get("left") || params.get("url");
+    const rightUrl = params.get("right");
+
     const url = new URL(
-        // "nike.splat",
-        // location.href,
-        params.get("url") || "train.splat",
+        leftUrl || "train.splat",
         "https://huggingface.co/cakewalk/splat-data/resolve/main/",
     );
     const req = await fetch(url, {
-        mode: "cors", // no-cors, *cors, same-origin
-        credentials: "omit", // include, *same-origin, omit
+        mode: "cors",
+        credentials: "omit",
     });
     console.log(req);
     if (req.status != 200)
@@ -765,13 +778,16 @@ async function main() {
         splatData.length / rowLength > 500000 ? 1 : 1 / devicePixelRatio;
     console.log(splatData.length / rowLength, downsample);
 
-    const worker = new Worker(
+    // Create worker factory function
+    const createWorkerInstance = () => new Worker(
         URL.createObjectURL(
             new Blob(["(", createWorker.toString(), ")(self)"], {
                 type: "application/javascript",
             }),
         ),
     );
+
+    const worker = createWorkerInstance();
 
     const canvas = document.getElementById("canvas");
     const fps = document.getElementById("fps");
@@ -843,6 +859,114 @@ async function main() {
     gl.bindBuffer(gl.ARRAY_BUFFER, indexBuffer);
     gl.vertexAttribIPointer(a_index, 1, gl.INT, false, 0, 0);
     gl.vertexAttribDivisor(a_index, 1);
+
+    // Initialize splat sets for split-screen mode
+    const createSplatSet = (label = '') => ({
+        data: null,
+        texture: gl.createTexture(),
+        indexBuffer: gl.createBuffer(),
+        vertexCount: 0,
+        worker: createWorkerInstance(),
+        label: label
+    });
+
+    // Setup worker message handler for a splat set
+    const setupWorkerHandler = (set) => {
+        set.worker.onmessage = (e) => {
+            if (e.data.buffer) {
+                set.data = new Uint8Array(e.data.buffer);
+                if (e.data.save) {
+                    const blob = new Blob([set.data.buffer], {
+                        type: "application/octet-stream",
+                    });
+                    const link = document.createElement("a");
+                    link.download = "model.splat";
+                    link.href = URL.createObjectURL(blob);
+                    document.body.appendChild(link);
+                    link.click();
+                }
+            } else if (e.data.texdata) {
+                const { texdata, texwidth, texheight } = e.data;
+                gl.bindTexture(gl.TEXTURE_2D, set.texture);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+                gl.texImage2D(
+                    gl.TEXTURE_2D,
+                    0,
+                    gl.RGBA32UI,
+                    texwidth,
+                    texheight,
+                    0,
+                    gl.RGBA_INTEGER,
+                    gl.UNSIGNED_INT,
+                    texdata,
+                );
+            } else if (e.data.depthIndex) {
+                const { depthIndex } = e.data;
+                gl.bindBuffer(gl.ARRAY_BUFFER, set.indexBuffer);
+                gl.bufferData(gl.ARRAY_BUFFER, depthIndex, gl.DYNAMIC_DRAW);
+                set.vertexCount = e.data.vertexCount;
+            }
+        };
+    };
+
+    // Initialize splat sets
+    splatSets.left = createSplatSet('Left');
+    splatSets.right = createSplatSet('Right');
+    setupWorkerHandler(splatSets.left);
+    setupWorkerHandler(splatSets.right);
+
+    // UI elements for split mode
+    const divider = document.getElementById('divider');
+    const labelLeft = document.getElementById('label-left');
+    const labelRight = document.getElementById('label-right');
+
+    // Update split mode UI visibility
+    const updateSplitModeUI = () => {
+        const hasLeft = splatSets.left.vertexCount > 0;
+        const hasRight = splatSets.right.vertexCount > 0;
+        isSplitMode = hasLeft && hasRight;
+
+        if (isSplitMode) {
+            divider.classList.add('visible');
+            divider.style.left = (dividerPosition * 100) + '%';
+        } else {
+            divider.classList.remove('visible');
+        }
+
+        if (hasLeft && splatSets.left.label) {
+            labelLeft.textContent = splatSets.left.label;
+            labelLeft.classList.add('visible');
+        } else {
+            labelLeft.classList.remove('visible');
+        }
+
+        if (hasRight && splatSets.right.label) {
+            labelRight.textContent = splatSets.right.label;
+            labelRight.classList.add('visible');
+        } else {
+            labelRight.classList.remove('visible');
+        }
+    };
+
+    // Divider drag handling
+    divider.addEventListener('mousedown', (e) => {
+        isDraggingDivider = true;
+        e.preventDefault();
+    });
+
+    window.addEventListener('mousemove', (e) => {
+        if (isDraggingDivider) {
+            dividerPosition = Math.max(0.1, Math.min(0.9, e.clientX / innerWidth));
+            divider.style.left = (dividerPosition * 100) + '%';
+        }
+    });
+
+    window.addEventListener('mouseup', () => {
+        isDraggingDivider = false;
+    });
 
     const resize = () => {
         gl.uniform2fv(u_focal, new Float32Array([camera.fx, camera.fy]));
@@ -1352,14 +1476,81 @@ async function main() {
         const viewProj = multiply4(projectionMatrix, actualViewMatrix);
         worker.postMessage({ view: viewProj });
 
+        // Also send view to split-mode workers
+        if (splatSets.left.vertexCount > 0) {
+            splatSets.left.worker.postMessage({ view: viewProj });
+        }
+        if (splatSets.right.vertexCount > 0) {
+            splatSets.right.worker.postMessage({ view: viewProj });
+        }
+
         const currentFps = 1000 / (now - lastFrame) || 0;
         avgFps = avgFps * 0.9 + currentFps * 0.1;
 
-        if (vertexCount > 0) {
+        // Update split mode UI
+        updateSplitModeUI();
+
+        // Calculate combined vertex count for progress/spinner
+        const combinedVertexCount = isSplitMode
+            ? Math.max(splatSets.left.vertexCount, splatSets.right.vertexCount)
+            : (splatSets.left.vertexCount > 0 ? splatSets.left.vertexCount :
+               splatSets.right.vertexCount > 0 ? splatSets.right.vertexCount : vertexCount);
+
+        if (combinedVertexCount > 0 || vertexCount > 0) {
             document.getElementById("spinner").style.display = "none";
             gl.uniformMatrix4fv(u_view, false, actualViewMatrix);
-            gl.clear(gl.COLOR_BUFFER_BIT);
-            gl.drawArraysInstanced(gl.TRIANGLE_FAN, 0, 4, vertexCount);
+
+            if (isSplitMode) {
+                // Split-screen rendering with scissor test
+                const dividerX = Math.floor(gl.canvas.width * dividerPosition);
+
+                gl.enable(gl.SCISSOR_TEST);
+
+                // Render left side
+                if (splatSets.left.vertexCount > 0) {
+                    gl.scissor(0, 0, dividerX, gl.canvas.height);
+                    gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+                    gl.bindTexture(gl.TEXTURE_2D, splatSets.left.texture);
+                    gl.bindBuffer(gl.ARRAY_BUFFER, splatSets.left.indexBuffer);
+                    gl.vertexAttribIPointer(a_index, 1, gl.INT, false, 0, 0);
+                    gl.clear(gl.COLOR_BUFFER_BIT);
+                    gl.drawArraysInstanced(gl.TRIANGLE_FAN, 0, 4, splatSets.left.vertexCount);
+                }
+
+                // Render right side
+                if (splatSets.right.vertexCount > 0) {
+                    gl.scissor(dividerX, 0, gl.canvas.width - dividerX, gl.canvas.height);
+                    gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+                    gl.bindTexture(gl.TEXTURE_2D, splatSets.right.texture);
+                    gl.bindBuffer(gl.ARRAY_BUFFER, splatSets.right.indexBuffer);
+                    gl.vertexAttribIPointer(a_index, 1, gl.INT, false, 0, 0);
+                    gl.clear(gl.COLOR_BUFFER_BIT);
+                    gl.drawArraysInstanced(gl.TRIANGLE_FAN, 0, 4, splatSets.right.vertexCount);
+                }
+
+                gl.disable(gl.SCISSOR_TEST);
+            } else if (splatSets.left.vertexCount > 0 && !splatSets.right.vertexCount) {
+                // Only left side loaded (single view mode using left set)
+                gl.bindTexture(gl.TEXTURE_2D, splatSets.left.texture);
+                gl.bindBuffer(gl.ARRAY_BUFFER, splatSets.left.indexBuffer);
+                gl.vertexAttribIPointer(a_index, 1, gl.INT, false, 0, 0);
+                gl.clear(gl.COLOR_BUFFER_BIT);
+                gl.drawArraysInstanced(gl.TRIANGLE_FAN, 0, 4, splatSets.left.vertexCount);
+            } else if (splatSets.right.vertexCount > 0 && !splatSets.left.vertexCount) {
+                // Only right side loaded (single view mode using right set)
+                gl.bindTexture(gl.TEXTURE_2D, splatSets.right.texture);
+                gl.bindBuffer(gl.ARRAY_BUFFER, splatSets.right.indexBuffer);
+                gl.vertexAttribIPointer(a_index, 1, gl.INT, false, 0, 0);
+                gl.clear(gl.COLOR_BUFFER_BIT);
+                gl.drawArraysInstanced(gl.TRIANGLE_FAN, 0, 4, splatSets.right.vertexCount);
+            } else {
+                // Legacy single view mode (original texture/indexBuffer)
+                gl.bindTexture(gl.TEXTURE_2D, texture);
+                gl.bindBuffer(gl.ARRAY_BUFFER, indexBuffer);
+                gl.vertexAttribIPointer(a_index, 1, gl.INT, false, 0, 0);
+                gl.clear(gl.COLOR_BUFFER_BIT);
+                gl.drawArraysInstanced(gl.TRIANGLE_FAN, 0, 4, vertexCount);
+            }
         } else {
             gl.clear(gl.COLOR_BUFFER_BIT);
             document.getElementById("spinner").style.display = "";
@@ -1381,13 +1572,52 @@ async function main() {
 
     frame();
 
-    const isPly = (splatData) =>
-        splatData[0] == 112 &&
-        splatData[1] == 108 &&
-        splatData[2] == 121 &&
-        splatData[3] == 10;
+    const isPly = (data) =>
+        data[0] == 112 &&
+        data[1] == 108 &&
+        data[2] == 121 &&
+        data[3] == 10;
 
-    const selectFile = (file) => {
+    // Load a PLY/splat file into a specific side (left or right)
+    const loadToSide = (buffer, side, label = '', save = false) => {
+        const set = splatSets[side];
+        set.data = new Uint8Array(buffer);
+        set.label = label;
+        console.log(`Loading to ${side}:`, Math.floor(set.data.length / rowLength));
+
+        if (isPly(set.data)) {
+            set.worker.postMessage({ ply: set.data.buffer, save: save });
+        } else {
+            set.worker.postMessage({
+                buffer: set.data.buffer,
+                vertexCount: Math.floor(set.data.length / rowLength),
+            });
+        }
+    };
+
+    // Load from URL to a specific side
+    const loadUrlToSide = async (urlString, side, label = '') => {
+        const loadUrl = new URL(
+            urlString,
+            "https://huggingface.co/cakewalk/splat-data/resolve/main/",
+        );
+        try {
+            const response = await fetch(loadUrl, {
+                mode: "cors",
+                credentials: "omit",
+            });
+            if (response.status != 200) {
+                console.error(`Failed to load ${urlString}: ${response.status}`);
+                return;
+            }
+            const arrayBuffer = await response.arrayBuffer();
+            loadToSide(arrayBuffer, side, label || urlString.split('/').pop(), false);
+        } catch (err) {
+            console.error(`Error loading ${urlString}:`, err);
+        }
+    };
+
+    const selectFile = (file, side = null) => {
         const fr = new FileReader();
         if (/\.json$/i.test(file.name)) {
             fr.onload = () => {
@@ -1407,17 +1637,22 @@ async function main() {
         } else {
             stopLoading = true;
             fr.onload = () => {
-                splatData = new Uint8Array(fr.result);
-                console.log("Loaded", Math.floor(splatData.length / rowLength));
-
-                if (isPly(splatData)) {
-                    // ply file magic header means it should be handled differently
-                    worker.postMessage({ ply: splatData.buffer, save: true });
+                if (side) {
+                    // Load to specific side for split-screen mode
+                    loadToSide(fr.result, side, file.name, true);
                 } else {
-                    worker.postMessage({
-                        buffer: splatData.buffer,
-                        vertexCount: Math.floor(splatData.length / rowLength),
-                    });
+                    // Legacy single view mode
+                    splatData = new Uint8Array(fr.result);
+                    console.log("Loaded", Math.floor(splatData.length / rowLength));
+
+                    if (isPly(splatData)) {
+                        worker.postMessage({ ply: splatData.buffer, save: true });
+                    } else {
+                        worker.postMessage({
+                            buffer: splatData.buffer,
+                            vertexCount: Math.floor(splatData.length / rowLength),
+                        });
+                    }
                 }
             };
             fr.readAsArrayBuffer(file);
@@ -1441,39 +1676,62 @@ async function main() {
     document.addEventListener("drop", (e) => {
         e.preventDefault();
         e.stopPropagation();
-        selectFile(e.dataTransfer.files[0]);
+
+        // Determine which side to load based on drop position
+        const isRightSide = e.clientX > innerWidth * dividerPosition;
+        const side = isRightSide ? 'right' : 'left';
+
+        // Use split-screen mode for PLY/splat files
+        const file = e.dataTransfer.files[0];
+        if (/\.(ply|splat)$/i.test(file.name)) {
+            selectFile(file, side);
+        } else {
+            // JSON camera files still use legacy mode
+            selectFile(file);
+        }
     });
 
     let bytesRead = 0;
     let lastVertexCount = -1;
     let stopLoading = false;
 
-    while (true) {
-        const { done, value } = await reader.read();
-        if (done || stopLoading) break;
+    // If split mode URLs are provided, load them instead of default behavior
+    if (leftUrl && rightUrl) {
+        // Both left and right specified - use split mode
+        stopLoading = true;
+        await Promise.all([
+            loadUrlToSide(leftUrl, 'left', leftUrl.split('/').pop()),
+            loadUrlToSide(rightUrl, 'right', rightUrl.split('/').pop())
+        ]);
+    } else {
+        // Original streaming load behavior
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done || stopLoading) break;
 
-        splatData.set(value, bytesRead);
-        bytesRead += value.length;
+            splatData.set(value, bytesRead);
+            bytesRead += value.length;
 
-        if (vertexCount > lastVertexCount) {
-            if (!isPly(splatData)) {
+            if (vertexCount > lastVertexCount) {
+                if (!isPly(splatData)) {
+                    worker.postMessage({
+                        buffer: splatData.buffer,
+                        vertexCount: Math.floor(bytesRead / rowLength),
+                    });
+                }
+                lastVertexCount = vertexCount;
+            }
+        }
+        if (!stopLoading) {
+            if (isPly(splatData)) {
+                // ply file magic header means it should be handled differently
+                worker.postMessage({ ply: splatData.buffer, save: false });
+            } else {
                 worker.postMessage({
                     buffer: splatData.buffer,
                     vertexCount: Math.floor(bytesRead / rowLength),
                 });
             }
-            lastVertexCount = vertexCount;
-        }
-    }
-    if (!stopLoading) {
-        if (isPly(splatData)) {
-            // ply file magic header means it should be handled differently
-            worker.postMessage({ ply: splatData.buffer, save: false });
-        } else {
-            worker.postMessage({
-                buffer: splatData.buffer,
-                vertexCount: Math.floor(bytesRead / rowLength),
-            });
         }
     }
 }

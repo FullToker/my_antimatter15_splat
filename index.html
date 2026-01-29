@@ -179,6 +179,45 @@
 				border-radius: 10px;
 				font-size: x-small;
 			}
+
+			#divider {
+				position: absolute;
+				top: 0;
+				bottom: 0;
+				width: 4px;
+				background: rgba(255,255,255,0.5);
+				cursor: ew-resize;
+				z-index: 1000;
+				left: 50%;
+				transform: translateX(-50%);
+				display: none;
+			}
+
+			#divider:hover {
+				background: rgba(255,255,255,0.8);
+			}
+
+			#divider.visible {
+				display: block;
+			}
+
+			.label {
+				position: absolute;
+				bottom: 40px;
+				z-index: 999;
+				font-size: small;
+				background: rgba(0,0,0,0.5);
+				padding: 4px 8px;
+				border-radius: 4px;
+				display: none;
+			}
+
+			.label.visible {
+				display: block;
+			}
+
+			#label-left { left: 10px; }
+			#label-right { right: 10px; }
 			body.nohf .nohf {
 				display: none;
 			}
@@ -265,6 +304,10 @@ other
 			</div>
 		</div>
 		<canvas id="canvas"></canvas>
+
+		<div id="divider"></div>
+		<div id="label-left" class="label"></div>
+		<div id="label-right" class="label"></div>
 
 		<div id="quality">
 			<span id="fps"></span>
