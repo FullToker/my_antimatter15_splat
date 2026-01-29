@@ -747,6 +747,11 @@ let isDraggingDivider = false;
 let isSplitMode = false;
 
 async function main() {
+    // Ensure camera is initialized
+    if (!camera && cameras.length > 0) {
+        camera = cameras[0];
+    }
+
     let carousel = true;
     const params = new URLSearchParams(location.search);
     try {
@@ -971,6 +976,11 @@ async function main() {
     });
 
     const resize = () => {
+        // Ensure camera is valid
+        if (!camera && cameras.length > 0) {
+            camera = cameras[0];
+        }
+        if (!camera) return;
         gl.uniform2fv(u_focal, new Float32Array([camera.fx, camera.fy]));
 
         projectionMatrix = getProjectionMatrix(
@@ -1052,8 +1062,10 @@ async function main() {
         if (!activeKeys.includes(e.code)) activeKeys.push(e.code);
         if (/\d/.test(e.key)) {
             currentCameraIndex = parseInt(e.key);
-            camera = cameras[currentCameraIndex];
-            viewMatrix = getViewMatrix(camera);
+            if (currentCameraIndex < cameras.length && cameras[currentCameraIndex]) {
+                camera = cameras[currentCameraIndex];
+                viewMatrix = getViewMatrix(camera);
+            }
         }
         if (["-", "_"].includes(e.key)) {
             currentCameraIndex =
@@ -1475,6 +1487,16 @@ async function main() {
         inv2 = rotate4(inv2, -0.1 * jumpDelta, 1, 0, 0);
         let actualViewMatrix = invert4(inv2);
 
+        // Ensure projectionMatrix is valid
+        if (!projectionMatrix) {
+            resize();
+        }
+        if (!projectionMatrix) {
+            lastFrame = now;
+            requestAnimationFrame(frame);
+            return;
+        }
+
         const viewProj = multiply4(projectionMatrix, actualViewMatrix);
         worker.postMessage({ view: viewProj });
 
@@ -1624,7 +1646,8 @@ async function main() {
         if (/\.json$/i.test(file.name)) {
             fr.onload = () => {
                 cameras = JSON.parse(fr.result);
-                viewMatrix = getViewMatrix(cameras[0]);
+                camera = cameras[0];
+                viewMatrix = getViewMatrix(camera);
                 projectionMatrix = getProjectionMatrix(
                     camera.fx / downsample,
                     camera.fy / downsample,
