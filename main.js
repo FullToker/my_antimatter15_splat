@@ -878,9 +878,10 @@ async function main() {
     });
 
     // Setup worker message handler for a splat set
-    const setupWorkerHandler = (set) => {
+    const setupWorkerHandler = (set, sideName) => {
         set.worker.onmessage = (e) => {
             if (e.data.buffer) {
+                console.log(`[${sideName}] Received processed buffer`);
                 set.data = new Uint8Array(e.data.buffer);
                 if (e.data.save) {
                     const blob = new Blob([set.data.buffer], {
@@ -893,6 +894,7 @@ async function main() {
                     link.click();
                 }
             } else if (e.data.texdata) {
+                console.log(`[${sideName}] Received texdata`);
                 const { texdata, texwidth, texheight } = e.data;
                 gl.bindTexture(gl.TEXTURE_2D, set.texture);
                 gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
@@ -911,6 +913,7 @@ async function main() {
                     texdata,
                 );
             } else if (e.data.depthIndex) {
+                console.log(`[${sideName}] Received depthIndex, vertexCount:`, e.data.vertexCount);
                 const { depthIndex } = e.data;
                 gl.bindBuffer(gl.ARRAY_BUFFER, set.indexBuffer);
                 gl.bufferData(gl.ARRAY_BUFFER, depthIndex, gl.DYNAMIC_DRAW);
@@ -922,8 +925,8 @@ async function main() {
     // Initialize splat sets
     splatSets.left = createSplatSet('Left');
     splatSets.right = createSplatSet('Right');
-    setupWorkerHandler(splatSets.left);
-    setupWorkerHandler(splatSets.right);
+    setupWorkerHandler(splatSets.left, 'left');
+    setupWorkerHandler(splatSets.right, 'right');
 
     // UI elements for split mode
     const divider = document.getElementById('divider');
@@ -1500,11 +1503,11 @@ async function main() {
         const viewProj = multiply4(projectionMatrix, actualViewMatrix);
         worker.postMessage({ view: viewProj });
 
-        // Also send view to split-mode workers
-        if (splatSets.left.vertexCount > 0) {
+        // Also send view to split-mode workers (send even if vertexCount is 0 to trigger initial sort)
+        if (splatSets.left.data) {
             splatSets.left.worker.postMessage({ view: viewProj });
         }
-        if (splatSets.right.vertexCount > 0) {
+        if (splatSets.right.data) {
             splatSets.right.worker.postMessage({ view: viewProj });
         }
 
@@ -1617,6 +1620,15 @@ async function main() {
                 vertexCount: Math.floor(set.data.length / rowLength),
             });
         }
+
+        // Send initial view to trigger sorting (after a small delay to let worker process)
+        setTimeout(() => {
+            if (projectionMatrix && viewMatrix) {
+                const viewProj = multiply4(projectionMatrix, viewMatrix);
+                console.log(`Sending initial view to ${side}`);
+                set.worker.postMessage({ view: viewProj });
+            }
+        }, 500);
     };
 
     // Load from URL to a specific side
