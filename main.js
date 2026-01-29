@@ -755,8 +755,10 @@ async function main() {
     } catch (err) {}
 
     // Support both single and dual URL parameters
-    const leftUrl = params.get("left") || params.get("url");
-    const rightUrl = params.get("right");
+    // Default to split mode with same example model on both sides for testing
+    const hasAnyParam = params.get("left") || params.get("right") || params.get("url");
+    const leftUrl = params.get("left") || params.get("url") || (!hasAnyParam ? "train.splat" : null);
+    const rightUrl = params.get("right") || (!hasAnyParam ? "train.splat" : null);
 
     const url = new URL(
         leftUrl || "train.splat",
