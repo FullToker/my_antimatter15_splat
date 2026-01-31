@@ -218,6 +218,44 @@
 
 			#label-left { left: 10px; }
 			#label-right { right: 10px; }
+
+			#query-panel {
+				position: absolute;
+				top: 10px;
+				right: 120px;
+				z-index: 999;
+				background: rgba(0,0,0,0.7);
+				padding: 8px;
+				border-radius: 5px;
+			}
+
+			#instance-input {
+				width: 100px;
+				padding: 4px;
+				border: 1px solid #555;
+				border-radius: 3px;
+				background: #333;
+				color: white;
+			}
+
+			#highlight-btn {
+				padding: 4px 12px;
+				background: #0066cc;
+				color: white;
+				border: none;
+				border-radius: 3px;
+				cursor: pointer;
+			}
+
+			#highlight-btn:hover {
+				background: #0055aa;
+			}
+
+			#query-result {
+				margin-top: 5px;
+				font-size: 12px;
+				color: #aaa;
+			}
 			body.nohf .nohf {
 				display: none;
 			}
@@ -308,6 +346,14 @@ other
 		<div id="divider"></div>
 		<div id="label-left" class="label"></div>
 		<div id="label-right" class="label"></div>
+
+		<div id="query-panel">
+			<div style="display: flex; gap: 5px;">
+				<input type="number" id="instance-input" placeholder="Instance ID" />
+				<button id="highlight-btn">Go</button>
+			</div>
+			<div id="query-result"></div>
+		</div>
 
 		<div id="quality">
 			<span id="fps"></span>
