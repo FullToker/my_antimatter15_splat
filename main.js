@@ -550,6 +550,14 @@ function createWorker(self) {
         const rowLength = 3 * 4 + 3 * 4 + 4 + 4;
         const buffer = new ArrayBuffer(rowLength * vertexCount);
 
+        // Check for instance_id property
+        const instanceIdKey = types["instance_id"] !== undefined ? "instance_id" :
+                              types["label"] !== undefined ? "label" :
+                              types["object_id"] !== undefined ? "object_id" : null;
+        const hasInstanceId = instanceIdKey !== null;
+        const instanceIds = hasInstanceId ? new Int32Array(vertexCount) : null;
+        if (hasInstanceId) console.log("Found instance_id property:", instanceIdKey);
+
         console.time("build buffer");
         for (let j = 0; j < vertexCount; j++) {
             row = sizeIndex[j];
@@ -613,9 +621,14 @@ function createWorker(self) {
             } else {
                 rgba[3] = 255;
             }
+
+            // Store instance_id if available
+            if (hasInstanceId) {
+                instanceIds[j] = attrs[instanceIdKey];
+            }
         }
         console.timeEnd("build buffer");
-        return buffer;
+        return { buffer, instanceIds };
     }
 
     const throttledSort = () => {
@@ -637,9 +650,10 @@ function createWorker(self) {
         if (e.data.ply) {
             vertexCount = 0;
             runSort(viewProj);
-            buffer = processPlyBuffer(e.data.ply);
+            const result = processPlyBuffer(e.data.ply);
+            buffer = result.buffer;
             vertexCount = Math.floor(buffer.byteLength / rowLength);
-            postMessage({ buffer: buffer, save: !!e.data.save });
+            postMessage({ buffer: buffer, instanceIds: result.instanceIds, save: !!e.data.save });
         } else if (e.data.buffer) {
             buffer = e.data.buffer;
             vertexCount = e.data.vertexCount;
@@ -870,6 +884,8 @@ async function main() {
     // Initialize splat sets for split-screen mode
     const createSplatSet = (label = '') => ({
         data: null,
+        originalData: null,  // Store original data for highlight reset
+        instanceIds: null,   // Store instance IDs for querying
         texture: gl.createTexture(),
         indexBuffer: gl.createBuffer(),
         vertexCount: 0,
@@ -883,6 +899,11 @@ async function main() {
             if (e.data.buffer) {
                 console.log(`[${sideName}] Received processed buffer`);
                 set.data = new Uint8Array(e.data.buffer);
+                set.originalData = new Uint8Array(e.data.buffer.slice(0));
+                if (e.data.instanceIds) {
+                    set.instanceIds = e.data.instanceIds;
+                    console.log(`[${sideName}] Received instanceIds, count:`, set.instanceIds.length);
+                }
                 if (e.data.save) {
                     const blob = new Blob([set.data.buffer], {
                         type: "application/octet-stream",
@@ -1702,6 +1723,76 @@ async function main() {
             carousel = false;
         } catch (err) {}
     });
+
+    // Instance ID highlight functionality (left side only)
+    const highlightInstance = (instanceId) => {
+        const set = splatSets.left;
+        const resultDiv = document.getElementById('query-result');
+
+        if (!set.data || !set.originalData) {
+            resultDiv.textContent = 'No data loaded';
+            return;
+        }
+        if (!set.instanceIds) {
+            resultDiv.textContent = 'No instance_id in PLY';
+            return;
+        }
+
+        // Restore original data first
+        set.data.set(set.originalData);
+
+        // Find and highlight matching splats
+        const rowLen = 3 * 4 + 3 * 4 + 4 + 4;  // 32 bytes per splat
+        let matchCount = 0;
+        for (let i = 0; i < set.instanceIds.length; i++) {
+            if (set.instanceIds[i] === instanceId) {
+                matchCount++;
+                // Color offset: position(12) + scale(12) = 24
+                const colorOffset = i * rowLen + 24;
+                set.data[colorOffset] = 255;     // R
+                set.data[colorOffset + 1] = 0;   // G
+                set.data[colorOffset + 2] = 0;   // B
+            }
+        }
+
+        resultDiv.textContent = `Found ${matchCount} splats`;
+
+        // Send updated data to worker
+        set.worker.postMessage({
+            buffer: set.data.buffer,
+            vertexCount: set.instanceIds.length
+        });
+    };
+
+    const clearHighlight = () => {
+        const set = splatSets.left;
+        if (!set.originalData) return;
+        set.data.set(set.originalData);
+        set.worker.postMessage({
+            buffer: set.data.buffer,
+            vertexCount: set.instanceIds ? set.instanceIds.length : 0
+        });
+        document.getElementById('query-result').textContent = '';
+    };
+
+    // UI event handlers
+    const highlightBtn = document.getElementById('highlight-btn');
+    const instanceInput = document.getElementById('instance-input');
+
+    highlightBtn.addEventListener('click', () => {
+        const id = parseInt(instanceInput.value);
+        if (!isNaN(id)) highlightInstance(id);
+    });
+
+    instanceInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            const id = parseInt(instanceInput.value);
+            if (!isNaN(id)) highlightInstance(id);
+        }
+    });
+
+    // Double-click to clear highlight
+    highlightBtn.addEventListener('dblclick', clearHighlight);
 
     const preventDefault = (e) => {
         e.preventDefault();
