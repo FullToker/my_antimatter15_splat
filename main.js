@@ -656,11 +656,12 @@ function createWorker(self) {
             postMessage({ buffer: buffer, instanceIds: result.instanceIds, save: !!e.data.save });
         } else if (e.data.buffer) {
             buffer = e.data.buffer;
-            if (e.data.forceUpdate) {
-                lastVertexCount = 0;  // Force texture regeneration
-            }
             vertexCount = e.data.vertexCount;
-            throttledSort();
+            if (e.data.forceUpdate) {
+                generateTexture();  // Force texture regeneration
+                lastVertexCount = vertexCount;
+            }
+            if (viewProj) throttledSort();
         } else if (e.data.vertexCount) {
             vertexCount = e.data.vertexCount;
         } else if (e.data.view) {
