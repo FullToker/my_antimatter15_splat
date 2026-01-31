@@ -656,7 +656,11 @@ function createWorker(self) {
             postMessage({ buffer: buffer, instanceIds: result.instanceIds, save: !!e.data.save });
         } else if (e.data.buffer) {
             buffer = e.data.buffer;
+            if (e.data.forceUpdate) {
+                lastVertexCount = 0;  // Force texture regeneration
+            }
             vertexCount = e.data.vertexCount;
+            throttledSort();
         } else if (e.data.vertexCount) {
             vertexCount = e.data.vertexCount;
         } else if (e.data.view) {
@@ -1757,10 +1761,11 @@ async function main() {
 
         resultDiv.textContent = `Found ${matchCount} splats`;
 
-        // Send updated data to worker
+        // Send updated data to worker with forceUpdate to regenerate texture
         set.worker.postMessage({
             buffer: set.data.buffer,
-            vertexCount: set.instanceIds.length
+            vertexCount: set.instanceIds.length,
+            forceUpdate: true
         });
     };
 
@@ -1770,7 +1775,8 @@ async function main() {
         set.data.set(set.originalData);
         set.worker.postMessage({
             buffer: set.data.buffer,
-            vertexCount: set.instanceIds ? set.instanceIds.length : 0
+            vertexCount: set.instanceIds ? set.instanceIds.length : 0,
+            forceUpdate: true
         });
         document.getElementById('query-result').textContent = '';
     };
